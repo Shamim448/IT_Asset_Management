@@ -11,7 +11,7 @@ const CONFIG = {
   SHEETS: ["Assets","Repairs","Users","Departments","AssetTypes","Brands","IDRegistry","Sessions","AuditLog"]
 };
 const HEADERS = {
-  Assets:["assetId","assetType","department","brand","model","serialNumber","user","purchaseDate","warrantyExpiry","status","location","remarks","createdAt","updatedAt"],
+  Assets:["assetId","assetType","department","brand","model","serialNumber","user","purchaseDate","purchaseAmount","warrantyExpiry","status","location","remarks","createdAt","updatedAt"],
   Repairs:["repairId","assetId","repairDate","problem","repairDetails","vendor","repairCost","partsReplaced","repairStatus","returnDate","remarks","createdAt","updatedAt"],
   Users:["email","name","role","status","salt","passwordHash","createdAt","updatedAt"],
   Departments:["id","name"], AssetTypes:["id","name"], Brands:["id","name"],
@@ -26,6 +26,8 @@ function now_(){ return new Date(); }
 function iso_(d){ return Utilities.formatDate(new Date(d), Session.getScriptTimeZone() || "Asia/Dhaka","yyyy-MM-dd'T'HH:mm:ss"); }
 function setup(){
   const ss=ss_();
+  // v4: migrate Assets header to include Purchase Amount.
+  const assetSheet=ss.getSheetByName("Assets"); if(assetSheet){ HEADERS.Assets.forEach(function(h,i){ assetSheet.getRange(1,i+1).setValue(h); }); }
   CONFIG.SHEETS.forEach(n=>{
     let s=ss.getSheetByName(n); if(!s) s=ss.insertSheet(n);
     if(s.getLastRow()===0) s.appendRow(HEADERS[n]);
@@ -45,7 +47,7 @@ function getLastCompletedRepairDate_(assetId, repairs) {
   (repairs || []).forEach(function(r) {
     if (String(r.assetId || r['Asset ID'] || '').trim() !== String(assetId || '').trim()) return;
     const status = String(r.status || r['Repair Status'] || '').trim().toLowerCase();
-    if (status !== 'completed' && status !== 'returned') return;
+    if (status !== 'completed') return;
     const d = r.repairDate || r['Repair Date'] || "";
     if (d && (!latest || new Date(d) > new Date(latest))) latest = d;
   });
@@ -116,7 +118,9 @@ function auth_(token){
 function admin_(token,fn){const u=auth_(token);if(u.role!=="Admin")throw new Error("Admin permission required.");return fn();}
 function publicUser_(u){return {email:u.email,name:u.name,role:u.role,status:u.status};}
 function bootstrap_(u){
-  return {ok:true,user:publicUser_(u),data:{assets:read_("Assets"),repairs:read_("Repairs"),users:read_("Users").map(publicUser_),departments:read_("Departments"),assetTypes:read_("AssetTypes"),brands:read_("Brands"),audit:u.role==="Admin"?read_("AuditLog"):[]}};
+  const repairs=read_("Repairs");
+  const assets=read_("Assets").map(function(a){ return {...a,lastRepairDate:getLastCompletedRepairDate_(a.assetId,repairs)}; });
+  return {ok:true,user:publicUser_(u),data:{assets:assets,repairs:repairs,users:read_("Users").map(publicUser_),departments:read_("Departments"),assetTypes:read_("AssetTypes"),brands:read_("Brands"),audit:u.role==="Admin"?read_("AuditLog"):[]}};
 }
 function nextAssetId_(){
   const reg=read_("IDRegistry").map(x=>String(x.assetId)), used=read_("Assets").map(x=>String(x.assetId));let max=0;
