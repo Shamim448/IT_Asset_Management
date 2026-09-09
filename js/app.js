@@ -8,16 +8,31 @@ const $$ = s => [...document.querySelectorAll(s)];
 function esc(v){return String(v??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));}
 function money(v){
   const n=Number(v)||0;
-  return new Intl.NumberFormat(undefined,{minimumFractionDigits:(n%1===0?0:2),maximumFractionDigits:2}).format(n);
-}).format(Number(v)||0);}
+  return new Intl.NumberFormat(undefined,{
+    minimumFractionDigits:(n%1===0?0:2),
+    maximumFractionDigits:2
+  }).format(n);
+}
 function dateOnly(v){if(!v)return ""; const d=new Date(v); return isNaN(d)?String(v):d.toLocaleDateString();}
 function slug(v){return String(v||"").toLowerCase().replace(/\s+/g,"-");}
 function showLoading(on){$("#loading").classList.toggle("hidden",!on);}
 function toast(msg,error=false){const x=document.createElement("div");x.className="toast"+(error?" error":"");x.textContent=msg;$("#toastRoot").appendChild(x);setTimeout(()=>x.remove(),3200);}
 async function api(action,payload={}){
   if(!API_URL) return mockApi(action,payload);
-  const r=await fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action,...payload})});
-  const j=await r.json(); if(!j.ok) throw new Error(j.error||"Request failed"); return j;
+  const r=await fetch(API_URL,{
+    method:"POST",
+    headers:{"Content-Type":"text/plain;charset=utf-8"},
+    body:JSON.stringify({action,...payload}),
+    redirect:"follow"
+  });
+  const text=await r.text();
+  let j;
+  try{j=JSON.parse(text)}catch(e){
+    throw new Error("Apps Script returned a non-JSON response (HTTP "+r.status+"). Check Web App deployment/access settings.");
+  }
+  if(!r.ok) throw new Error(j.error||("HTTP "+r.status));
+  if(!j.ok) throw new Error(j.error||"Request failed");
+  return j;
 }
 async function call(action,payload={},busy=true){try{if(busy)showLoading(true);return await api(action,payload)}catch(e){toast(e.message||"Something went wrong",true);throw e}finally{if(busy)showLoading(false)}}
 
