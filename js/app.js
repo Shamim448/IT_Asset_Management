@@ -1,6 +1,6 @@
 /* IT Asset Management - production frontend
    Configure API_URL with the deployed Apps Script /exec URL. */
-const API_URL = "https://script.google.com/macros/s/AKfycbxAfFmR---2rPR69-YT97xe6N4U9YCDKu2hD0N95wW96N1Dykx0J4jnTomCRUyX7abI/exec"; // e.g. https://script.google.com/macros/s/XXXX/exec
+const API_URL = "https://script.google.com/macros/s/AKfycbwxJjp9DgWfILBWIIIOVJlKal2OcOMYEv3MAHxUc-o8_T4iDO-OdTGMJaJ6ML6eX3o/exec"; // e.g. https://script.google.com/macros/s/XXXX/exec
 const state = {token:localStorage.getItem("itam_token")||"", user:null, data:null, page:"dashboard", assetPage:1, repairPage:1, pageSize:15};
 
 const $ = s => document.querySelector(s);
