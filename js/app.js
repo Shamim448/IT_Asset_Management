@@ -8,10 +8,7 @@ const $$ = s => [...document.querySelectorAll(s)];
 function esc(v){return String(v??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));}
 function money(v){
   const n=Number(v)||0;
-  return new Intl.NumberFormat(undefined,{
-    minimumFractionDigits:(n%1===0?0:2),
-    maximumFractionDigits:2
-  }).format(n);
+  return new Intl.NumberFormat(undefined,{minimumFractionDigits:n%1===0?0:2,maximumFractionDigits:2}).format(n);
 }
 function dateOnly(v){if(!v)return ""; const d=new Date(v); return isNaN(d)?String(v):d.toLocaleDateString();}
 function slug(v){return String(v||"").toLowerCase().replace(/\s+/g,"-");}
@@ -73,6 +70,20 @@ function renderBars(el,rows,format=v=>v){
     return `<div class="bar-row"><span>${esc(k)}</span><div class="bar-track"><div class="bar-fill" style="width:${width}%"></div></div><strong>${esc(format(v))}</strong></div>`;
   }).join("");
 }
+function warrantyDateValue(a){
+  return a.warrantyExpiry||a["Warranty Expiry"]||a.warrantyDate||a["Warranty Date"]||"";
+}
+function warrantyLists(){
+  const now=new Date(); now.setHours(0,0,0,0);
+  const soon=new Date(now); soon.setDate(soon.getDate()+60);
+  const expired=state.data.assets.filter(a=>{
+    const d=new Date(warrantyDateValue(a)); return !isNaN(d.getTime())&&d<now;
+  }).sort((a,b)=>new Date(warrantyDateValue(b))-new Date(warrantyDateValue(a)));
+  const expiring=state.data.assets.filter(a=>{
+    const d=new Date(warrantyDateValue(a)); return !isNaN(d.getTime())&&d>=now&&d<=soon;
+  }).sort((a,b)=>new Date(warrantyDateValue(a))-new Date(warrantyDateValue(b)));
+  return {expired,expiring};
+}
 function dashboardStats(){const assets=state.data.assets,reps=state.data.repairs,comp=completedRepairs(),now=new Date();const mc=comp.filter(r=>{const d=new Date(r.repairDate);return !isNaN(d)&&d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear()});const yc=comp.filter(r=>{const d=new Date(r.repairDate);return !isNaN(d)&&d.getFullYear()===now.getFullYear()});const cost=comp.reduce((s,r)=>s+Number(r.repairCost||0),0);return{assets:assets.length,reps:reps.length,cost,month:mc.length,year:yc.length,monthCost:mc.reduce((s,r)=>s+Number(r.repairCost||0),0),yearCost:yc.reduce((s,r)=>s+Number(r.repairCost||0),0)}}
 function renderDashboard(){
   const s=dashboardStats();
@@ -115,7 +126,19 @@ function populateFilters(){const mt=(state.data.assetTypes||[]).map(x=>x.name||x
 function renderAssets(){populateFilters();let arr=[...state.data.assets];const q=$("#assetSearch").value.toLowerCase(),tf=$("#assetTypeFilter").value,df=$("#deptFilter").value,sf=$("#statusFilter").value;arr=arr.filter(a=>!q||JSON.stringify(a).toLowerCase().includes(q)).filter(a=>!tf||norm(assetType(a))===norm(tf)).filter(a=>!df||norm(assetDept(a))===norm(df)).filter(a=>!sf||a.status===sf);const total=arr.length,pages=Math.max(1,Math.ceil(total/state.pageSize));state.assetPage=Math.min(state.assetPage,pages);const rows=arr.slice((state.assetPage-1)*state.pageSize,state.assetPage*state.pageSize);$("#assetsTable").innerHTML=tableAssets(rows,total);pager("#assetsPager",state.assetPage,pages,p=>{state.assetPage=p;renderAssets()})}
 function tableAssets(rows,total){if(!rows.length)return `<div class="asset-total">Total Assets: <strong>0</strong></div><div class="empty">No assets found</div>`;return `<div class="asset-total">Total Assets: <strong>${total}</strong></div><div class="table-wrap"><table><thead><tr><th>Asset ID</th><th>Type</th><th>Project Name</th><th>Device Name</th><th>Brand / Model</th><th>Serial No.</th><th>Bill No</th><th>Supplier Name</th><th>Purchase Date</th><th>Purchase Amount</th><th>Last Repair Date</th><th>User</th><th>Department</th><th>Status</th><th>Warranty</th><th>Actions</th></tr></thead><tbody>${rows.map(a=>`<tr><td><strong>${esc(a.assetId)}</strong></td><td>${esc(assetType(a))}</td><td>${esc(a.projectName||"")}</td><td>${esc(a.deviceName||"")}</td><td>${esc(a.brand||"")} ${esc(a.model||"")}</td><td>${esc(a.serialNumber||a.serialNo||"")}</td><td>${esc(a.billNo||"")}</td><td>${esc(a.supplierName||"")}</td><td>${dateOnly(a.purchaseDate)}</td><td>${money(a.purchaseAmount)}</td><td>${dateOnly(a.lastRepairDate)}</td><td>${esc(a.user||"")}</td><td>${esc(assetDept(a))}</td><td><span class="tag ${slug(a.status)}">${esc(a.status)}</span></td><td>${dateOnly(a.warrantyExpiry)}</td><td><div class="row-actions"><button onclick="assetDetails('${esc(a.assetId)}')">View</button><button onclick="repairHistory('${esc(a.assetId)}')">Repairs</button><button onclick="changeStatus('${esc(a.assetId)}')">Status</button>${state.user.role==="Admin"?`<button onclick="editAsset('${esc(a.assetId)}')">Edit</button><button onclick="deleteAsset('${esc(a.assetId)}')">Delete</button>`:""}</div></td></tr>`).join("")}</tbody></table></div>`}
 function renderRepairs(){let arr=[...state.data.repairs],q=$("#repairSearch").value.toLowerCase(),sf=$("#repairStatusFilter").value;arr=arr.filter(r=>!q||JSON.stringify(r).toLowerCase().includes(q)).filter(r=>!sf||r.repairStatus===sf);const pages=Math.max(1,Math.ceil(arr.length/state.pageSize));state.repairPage=Math.min(state.repairPage,pages);const rows=arr.slice((state.repairPage-1)*state.pageSize,state.repairPage*state.pageSize);$("#repairsTable").innerHTML=rows.length?`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Asset</th><th>Problem</th><th>Vendor / Technician</th><th>Cost</th><th>Status</th><th>Return Date</th><th>Actions</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${dateOnly(r.repairDate)}</td><td><strong>${esc(r.assetId)}</strong></td><td>${esc(r.problem||"")}</td><td>${esc(r.vendor||"")}</td><td>${money(r.repairCost)}</td><td><span class="tag ${slug(r.repairStatus)}">${esc(r.repairStatus)}</span></td><td>${dateOnly(r.returnDate)}</td><td><div class="row-actions">${state.user.role==="Admin"?`<button onclick="editRepair('${esc(r.repairId)}')">Edit</button><button onclick="deleteRepair('${esc(r.repairId)}')">Delete</button>`:""}<button onclick="assetDetails('${esc(r.assetId)}')">Asset</button></div></td></tr>`).join("")}</tbody></table></div>`:`<div class="empty">No repair records</div>`;pager("#repairsPager",state.repairPage,pages,p=>{state.repairPage=p;renderRepairs()});}
-function renderWarranty(){const w=warrantyLists();$("#expiredAll").innerHTML=miniAssets(w.expired,a=>dateOnly(a.warrantyExpiry),"expired");$("#expiringSoon").innerHTML=miniAssets(w.expiring,a=>dateOnly(a.warrantyExpiry),"expires");}
+function warrantyTable(rows,emptyText){
+  if(!rows.length)return `<div class="empty">${esc(emptyText)}</div>`;
+  return `<div class="table-wrap"><table><thead><tr><th>Asset ID</th><th>Asset Type</th><th>Brand / Model</th><th>User</th><th>Department</th><th>Warranty Expiry</th></tr></thead><tbody>`+
+  rows.map(a=>`<tr><td><strong>${esc(a.assetId||"")}</strong></td><td>${esc(assetType(a)||"")}</td><td>${esc([a.brand||"",a.model||""].filter(Boolean).join(" / "))}</td><td>${esc(a.user||"")}</td><td>${esc(assetDept(a)||"")}</td><td>${esc(dateOnly(warrantyDateValue(a)))}</td></tr>`).join("")+
+  `</tbody></table></div>`;
+}
+function renderWarranty(){
+  const w=warrantyLists();
+  const e=document.querySelector("#expiredAll"), x=document.querySelector("#expiringSoon");
+  if(e)e.innerHTML=warrantyTable(w.expired.slice(0,10),"No expired warranty records");
+  if(x)x.innerHTML=warrantyTable(w.expiring,"No warranty expiring within 60 days");
+}
+
 function renderSettings(){["Departments","AssetTypes","Brands"].forEach(n=>{const key=n[0].toLowerCase()+n.slice(1);const arr=state.data[key]||[];$("#master"+n).innerHTML=arr.length?arr.map(x=>`<div class="mini-item"><span>${esc(x.name||x)}</span><button class="row-actions" onclick="deleteMaster('${n}','${esc(x.id||x.name||x)}')">Delete</button></div>`).join(""):`<div class="empty">No records</div>`});$("#usersTable").innerHTML=`<div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead><tbody>${state.data.users.map(u=>`<tr><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${esc(u.role)}</td><td>${esc(u.status)}</td><td><div class="row-actions"><button onclick="editUser('${esc(u.email)}')">Edit</button>${u.email!==state.user.email?`<button onclick="deleteUser('${esc(u.email)}')">Delete</button>`:""}</div></td></tr>`).join("")}</tbody></table></div>`;}
 function renderAudit(){$("#auditTable").innerHTML=state.data.audit.length?`<div class="table-wrap"><table><thead><tr><th>Time</th><th>User</th><th>Action</th><th>Target</th><th>Details</th></tr></thead><tbody>${state.data.audit.slice().reverse().map(a=>`<tr><td>${esc(a.timestamp)}</td><td>${esc(a.email)}</td><td>${esc(a.action)}</td><td>${esc(a.target)}</td><td>${esc(a.details)}</td></tr>`).join("")}</tbody></table></div>`:`<div class="empty">No audit records</div>`;}
 
