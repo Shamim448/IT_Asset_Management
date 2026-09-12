@@ -84,6 +84,26 @@ function warrantyLists(){
   }).sort((a,b)=>new Date(warrantyDateValue(a))-new Date(warrantyDateValue(b)));
   return {expired,expiring};
 }
+function staleAssets(){
+  const latest={};
+  completedRepairs().forEach(r=>{
+    const id=String(r.assetId||r["Asset ID"]||"").trim();
+    const raw=r.repairDate||r["Repair Date"]||"";
+    const d=new Date(raw);
+    if(id && !isNaN(d.getTime()) && (!latest[id] || d>latest[id])) latest[id]=d;
+  });
+  const cutoff=new Date();
+  cutoff.setDate(cutoff.getDate()-120);
+  cutoff.setHours(0,0,0,0);
+  return state.data.assets.filter(a=>{
+    const type=assetType(a).toLowerCase();
+    const id=String(a.assetId||a["Asset ID"]||"").trim();
+    return (type==="laptop" || type==="desktop") && latest[id] && latest[id] < cutoff;
+  }).map(a=>{
+    const id=String(a.assetId||a["Asset ID"]||"").trim();
+    return {...a,lastRepair:latest[id].toISOString().slice(0,10)};
+  }).sort((a,b)=>new Date(a.lastRepair)-new Date(b.lastRepair));
+}
 function dashboardStats(){const assets=state.data.assets,reps=state.data.repairs,comp=completedRepairs(),now=new Date();const mc=comp.filter(r=>{const d=new Date(r.repairDate);return !isNaN(d)&&d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear()});const yc=comp.filter(r=>{const d=new Date(r.repairDate);return !isNaN(d)&&d.getFullYear()===now.getFullYear()});const cost=comp.reduce((s,r)=>s+Number(r.repairCost||0),0);return{assets:assets.length,reps:reps.length,cost,month:mc.length,year:yc.length,monthCost:mc.reduce((s,r)=>s+Number(r.repairCost||0),0),yearCost:yc.reduce((s,r)=>s+Number(r.repairCost||0),0)}}
 function renderDashboard(){
   const s=dashboardStats();
@@ -100,27 +120,58 @@ function renderDashboard(){
   renderBars("#deptChart",counts("department",state.data.assets));
   renderBars("#typeChart",counts("assetType",state.data.assets));
 
-  const w=warrantyLists();
-  $("#expiredTop").innerHTML=miniAssets(w.expired.slice(0,10),a=>dateOnly(a.warrantyExpiry),"expired");
+  // Upcoming warranty: nearest 10 future expiries.
+  const upcoming=state.data.assets.filter(a=>{
+    const d=new Date(warrantyDateValue(a));
+    return !isNaN(d.getTime()) && d>=new Date(new Date().setHours(0,0,0,0));
+  }).sort((a,b)=>new Date(warrantyDateValue(a))-new Date(warrantyDateValue(b))).slice(0,10);
+  $("#expiredTop").innerHTML=miniAssets(upcoming,a=>dateOnly(warrantyDateValue(a)),"expires");
+
+  // Laptop/Desktop whose latest Completed repair is older than 120 days.
   $("#staleRepairs").innerHTML=miniAssets(staleAssets().slice(0,10),a=>dateOnly(a.lastRepair),"last completed");
 
+  // Repair analytics are based on Completed repairs and resolve Asset Type
+  // from the linked Asset record when the repair row itself has no type.
   const cr=completedRepairs();
   const repairCounts={}, repairCosts={};
   cr.forEach(r=>{
     const type=repairAssetType(r);
     repairCounts[type]=(repairCounts[type]||0)+1;
-    repairCosts[type]=(repairCosts[type]||0)+Number(r.repairCost||r["Repair Cost"]||r.cost||0);
+    const cost=Number(r.repairCost||r["Repair Cost"]||r.cost||0);
+    repairCosts[type]=(repairCosts[type]||0)+cost;
   });
   renderBars("#repairCountChart",Object.entries(repairCounts).sort((a,b)=>b[1]-a[1]));
   renderBars("#repairCostChart",Object.entries(repairCosts).sort((a,b)=>b[1]-a[1]),money);
 
-  const cm={};
-  state.data.repairs.forEach(r=>{if(r.assetId)cm[r.assetId]=(cm[r.assetId]||0)+1});
-  const top=Object.entries(cm).sort((a,b)=>b[1]-a[1]).slice(0,10);
-  $("#topAssets").innerHTML=top.length
-    ? `<div class="table-wrap"><table><thead><tr><th>Asset ID</th><th>Asset</th><th>Repair Count</th></tr></thead><tbody>${top.map(([id,n])=>{const a=state.data.assets.find(x=>x.assetId===id)||{};return `<tr><td>${esc(id)}</td><td>${esc(a.brand||"")} ${esc(a.model||"")}</td><td><strong>${n}</strong></td></tr>`}).join("")}</tbody></table></div>`
+  // Top 10 assets by repair count (all repair records).
+  const countByAsset={};
+  state.data.repairs.forEach(r=>{
+    const id=String(r.assetId||r["Asset ID"]||"").trim();
+    if(id) countByAsset[id]=(countByAsset[id]||0)+1;
+  });
+  const topCount=Object.entries(countByAsset).sort((a,b)=>b[1]-a[1]).slice(0,10);
+  $("#topAssets").innerHTML=topCount.length
+    ? `<div class="table-wrap"><table><thead><tr><th>Asset ID</th><th>Asset</th><th>Asset Type</th><th>Repair Count</th></tr></thead><tbody>${topCount.map(([id,n])=>{
+        const a=state.data.assets.find(x=>String(x.assetId||"").trim()===id)||{};
+        return `<tr><td>${esc(id)}</td><td>${esc([a.brand||"",a.model||""].filter(Boolean).join(" / "))}</td><td>${esc(assetType(a)||"Unassigned")}</td><td><strong>${n}</strong></td></tr>`;
+      }).join("")}</tbody></table></div>`
     : `<div class="empty">No repair history</div>`;
+
+  // Top 10 assets by completed repair cost.
+  const costByAsset={};
+  cr.forEach(r=>{
+    const id=String(r.assetId||r["Asset ID"]||"").trim();
+    if(id) costByAsset[id]=(costByAsset[id]||0)+Number(r.repairCost||r["Repair Cost"]||r.cost||0);
+  });
+  const topCost=Object.entries(costByAsset).sort((a,b)=>b[1]-a[1]).slice(0,10);
+  $("#topAssetsCost").innerHTML=topCost.length
+    ? `<div class="table-wrap"><table><thead><tr><th>Asset ID</th><th>Asset</th><th>Asset Type</th><th>Repair Cost</th></tr></thead><tbody>${topCost.map(([id,cost])=>{
+        const a=state.data.assets.find(x=>String(x.assetId||"").trim()===id)||{};
+        return `<tr><td>${esc(id)}</td><td>${esc([a.brand||"",a.model||""].filter(Boolean).join(" / "))}</td><td>${esc(assetType(a)||"Unassigned")}</td><td><strong>${esc(money(cost))}</strong></td></tr>`;
+      }).join("")}</tbody></table></div>`
+    : `<div class="empty">No completed repair cost</div>`;
 }
+
 function miniAssets(arr,right,label){return arr.length?`<div class="mini-list">${arr.map(a=>`<div class="mini-item"><span><strong>${esc(a.assetId)}</strong><br>${esc(assetType(a))} · ${esc(a.brand||"")} ${esc(a.model||"")}</span><span>${esc(right(a))}<br><small>${label}</small></span></div>`).join("")}</div>`:`<div class="empty">No records</div>`;}
 function populateFilters(){const mt=(state.data.assetTypes||[]).map(x=>x.name||x).filter(Boolean),at=state.data.assets.map(assetType).filter(Boolean),md=(state.data.departments||[]).map(x=>x.name||x).filter(Boolean),ad=state.data.assets.map(assetDept).filter(Boolean);const ts=[...new Map([...mt,...at].map(x=>[norm(x),x])).values()].sort();const ds=[...new Map([...md,...ad].map(x=>[norm(x),x])).values()].sort();const oldT=$("#assetTypeFilter").value,oldD=$("#deptFilter").value;$("#assetTypeFilter").innerHTML='<option value="">All types</option>'+ts.map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join("");$("#deptFilter").innerHTML='<option value="">All departments</option>'+ds.map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join("");if(ts.some(x=>norm(x)===norm(oldT)))$("#assetTypeFilter").value=oldT;if(ds.some(x=>norm(x)===norm(oldD)))$("#deptFilter").value=oldD}
 function renderAssets(){populateFilters();let arr=[...state.data.assets];const q=$("#assetSearch").value.toLowerCase(),tf=$("#assetTypeFilter").value,df=$("#deptFilter").value,sf=$("#statusFilter").value;arr=arr.filter(a=>!q||JSON.stringify(a).toLowerCase().includes(q)).filter(a=>!tf||norm(assetType(a))===norm(tf)).filter(a=>!df||norm(assetDept(a))===norm(df)).filter(a=>!sf||a.status===sf);const total=arr.length,pages=Math.max(1,Math.ceil(total/state.pageSize));state.assetPage=Math.min(state.assetPage,pages);const rows=arr.slice((state.assetPage-1)*state.pageSize,state.assetPage*state.pageSize);$("#assetsTable").innerHTML=tableAssets(rows,total);pager("#assetsPager",state.assetPage,pages,p=>{state.assetPage=p;renderAssets()})}
